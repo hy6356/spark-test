@@ -25,8 +25,7 @@ import org.apache.spark.rdd.RDD
 object WikipediaPageRankStandalone {
   def main(args: Array[String]) {
     if (args.length < 3) {
-      System.err.println("Usage: WikipediaPageRankStandalone <inputFile> <numTop> " +
-        "<numIterations>")
+      System.err.println("Usage: WikipediaPageRankStandalone <inputFile> <numTop> <numIterations> <university_name>")
       System.exit(-1)
     }
     val sparkConf = new SparkConf()
@@ -119,9 +118,9 @@ object WikipediaPageRankStandalone {
           }
       }
       ranks = (contribs.combineByKey((x: Double) => x,
-        (x: Double, y: Double) => x + y,
-        (x: Double, y: Double) => x + y)
-        .mapValues(sum => a/n + (1-a)*sum))
+                                     (x: Double, y: Double) => x + y,
+                                     (x: Double, y: Double) => x + y)
+               .mapValues(sum => a/n + (1-a)*sum))
     }
     ranks
   }
