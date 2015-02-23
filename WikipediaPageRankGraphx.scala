@@ -20,12 +20,14 @@ import scala.xml.{XML, NodeSeq}
 import org.apache.spark._
 import org.apache.spark.SparkContext._
 import org.apache.spark.rdd.RDD
+import org.apache.spark.graphx._
 
 
-object WikipediaPageRankStandalone {
+object WikipediaPageRankGraphx {
   def main(args: Array[String]) {
     if (args.length < 3) {
-      System.err.println("Usage: WikipediaPageRankStandalone <inputFile> <numTop> <numIterations> <university_list>")
+      System.err.println("Usage: WikipediaPageRankStandalone <inputFile> <numTop> " +
+        "<numIterations> <university_list>")
       System.exit(-1)
     }
     val sparkConf = new SparkConf()
@@ -35,7 +37,7 @@ object WikipediaPageRankStandalone {
     val numIterations = args(2).toInt
     val university_list = args(3)
 
-    sparkConf.setAppName("WikipediaPageRankStandalone")
+    sparkConf.setAppName("WikipediaPageRankGraphx")
 
     val sc = new SparkContext(sparkConf)
 
@@ -43,29 +45,40 @@ object WikipediaPageRankStandalone {
     val universities = sc.textFile(university_list).collect.toSet
     val links =
       input.map(parseArticle _).cache()
-    val n = links.count()
-    val defaultRank = 1.0 / n
-    val a = 0.15
 
-    // Do the computation
+    // Hash function to assign an Id to each article
+    def pageHash(title: String): VertexId = {
+      title.toLowerCase.replace(" ", "").hashCode.toLong
+    }
+    // The vertices with id and article title:
+    val vertices = links.map(a => (pageHash(a._1), a._1)).cache
+
+    val edges: RDD[Edge[Double]] = links.flatMap { a =>
+      val srcVid = pageHash(a._1)
+      a._2.map(out => {
+        val outid = pageHash(out)
+        Edge(srcVid, outid, 1.0)
+      })
+    }
+
+    val graph = Graph(vertices,edges,"").subgraph(vpred = {(v,d) => d.nonEmpty}).cache()
+
     val startTime = System.currentTimeMillis
-    val ranks =
-      pageRank(links, numIterations, defaultRank, a, n)
-//    val univ = ranks.filter{case (id,rank) => universities.contains(id)}
+
+    val prGraph = graph.staticPageRank(20).cache()
+
+    val titleAndPrGraph = graph.outerJoinVertices(prGraph.vertices) {
+      (v, title, rank) => (rank.getOrElse(0.0), title)
+    }
+
     // Print the result
     println("Top " + numTop + " :")
-    //    val top =
-    //      (ranks
-    //        .filter { case (id, rank) => rank >= threshold }
-    //        .map { case (id, rank) => "%s\t%s\n".format(id, rank) }
-    //        .collect().mkString)
-    //    println(top)
-    val top = (ranks
-                .filter { case (id,rank) => universities.contains(id)}
-                .top(numTop) { Ordering.by((entry:(String, Double)) => entry._2) }
-                .map { case (id, rank) => "%s: %s\n".format(id, rank) }
-                .mkString)
-    println(top)
+
+      //titleAndPrGraph.vertices.top(numTop) {
+    titleAndPrGraph.vertices
+      .filter {(entry: (VertexId,(Double,String))) => universities.contains(entry._2._2)}
+      .top(numTop) { Ordering.by((entry: (VertexId, (Double, String))) => entry._2._1)}
+      .foreach(t => println(t._2._2 + ": " + t._2._1))
 
     val time = (System.currentTimeMillis - startTime) / 1000.0
     println("Completed %d iterations in %f seconds: %f seconds per iteration"
